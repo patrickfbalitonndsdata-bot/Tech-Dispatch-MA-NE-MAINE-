@@ -1,7 +1,11 @@
 import React, { useState } from "react";
 import { X, Settings, Building, Phone, Mail, Palette, CheckSquare, ShieldCheck, Check, Tag, Hash, Layers, RefreshCw, AlertCircle, CalendarDays, Filter, FileX, ClipboardList, Users, ExternalLink, Plus, Trash2, Link2 } from "lucide-react";
 import { TemplateBranding, TechnicianAirtableEntry } from "../types";
-import { formatEmailUpdateVersion, getEmailUpdateBannerText } from "../utils/outlookTemplateGenerator";
+import {
+  formatEmailUpdateVersion,
+  getEmailUpdateBannerText,
+  getStandardWorkWeekOptions,
+} from "../utils/outlookTemplateGenerator";
 import { DEFAULT_TECHNICIAN_ROSTER } from "../utils/technicianRosterData";
 
 interface SettingsBrandingModalProps {
@@ -30,6 +34,7 @@ export const SettingsBrandingModal: React.FC<SettingsBrandingModalProps> = ({
     emailUpdateVersion: branding.emailUpdateVersion ?? "2",
     emailUpdateNotes: branding.emailUpdateNotes ?? "",
     enableScheduleOverlap: branding.enableScheduleOverlap ?? false,
+    selectedWorkWeek: branding.selectedWorkWeek || "current",
     enableSunSunView: branding.enableSunSunView ?? false,
     disableScheduleNotes: branding.disableScheduleNotes ?? false,
     technicianAirtableLinks:
@@ -804,8 +809,8 @@ export const SettingsBrandingModal: React.FC<SettingsBrandingModalProps> = ({
                 </label>
               </div>
 
-              {/* Schedule Overlap Detection Toggle */}
-              <div className="pt-2 border-t border-zinc-100">
+              {/* Schedule Overlap Detection Toggle & Work Week Picker */}
+              <div className="pt-2 border-t border-zinc-100 space-y-2">
                 <label className="flex items-start space-x-2.5 cursor-pointer">
                   <input
                     type="checkbox"
@@ -823,6 +828,26 @@ export const SettingsBrandingModal: React.FC<SettingsBrandingModalProps> = ({
                     </span>
                   </div>
                 </label>
+
+                {/* Work Week Dropdown Picker */}
+                {(() => {
+                  const stdWeeks = getStandardWorkWeekOptions(form);
+                  return (
+                    <div className="ml-6.5 flex flex-col sm:flex-row sm:items-center gap-2 p-2.5 rounded-lg bg-emerald-50/70 border border-emerald-200/80">
+                      <span className="text-xs font-semibold text-emerald-950 whitespace-nowrap">
+                        Target Work Week:
+                      </span>
+                      <select
+                        value={form.selectedWorkWeek || "current"}
+                        onChange={(e) => handleChange("selectedWorkWeek", e.target.value)}
+                        className="text-xs font-medium border border-emerald-300 rounded-md px-2.5 py-1.5 bg-white text-zinc-900 shadow-xs focus:ring-1 focus:ring-emerald-500 focus:outline-none cursor-pointer flex-1"
+                      >
+                        <option value="current">Current Work week {stdWeeks.current.formattedRange}</option>
+                        <option value="incoming">Incoming Work week {stdWeeks.incoming.formattedRange}</option>
+                      </select>
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* Sun - Sun (8-Day View) Toggle */}
