@@ -21,7 +21,13 @@ import {
   EmailAttachment,
   SavedEmailRecord,
 } from "./types";
-import { DEFAULT_BRANDING, DEFAULT_PRESET_NOTES, getWeekDateRange } from "./utils/outlookTemplateGenerator";
+import {
+  DEFAULT_BRANDING,
+  DEFAULT_PRESET_NOTES,
+  getWeekDateRange,
+  getWorkWeekOptions,
+  filterOrdersForScheduleOverlap,
+} from "./utils/outlookTemplateGenerator";
 import { DEFAULT_TECHNICIAN_ROSTER, resolveTechnicianAirtableUrl } from "./utils/technicianRosterData";
 import {
   getSavedEmails,
@@ -139,7 +145,34 @@ export default function App() {
     safeSetLocalStorage("techdispatch_branding", JSON.stringify(sanitized));
   };
 
-  // 5. Group Work Orders by Technician (automatically read from Technicians column)
+  // 5. Work Week Options (Current vs. Incoming vs. detected weeks)
+  const workWeekOptions = useMemo(() => {
+    return getWorkWeekOptions(parseResult.orders, branding);
+  }, [parseResult.orders, branding]);
+
+  const activeWorkWeek = useMemo(() => {
+    const currentSel = branding.selectedWorkWeek || "current";
+    return workWeekOptions.find((w) => w.id === currentSel) || workWeekOptions[0];
+  }, [workWeekOptions, branding.selectedWorkWeek]);
+
+  // Overall schedule overlap statistics across all orders
+  const overlapStats = useMemo(() => {
+    if (!branding.enableScheduleOverlap || parseResult.orders.length === 0 || !activeWorkWeek) {
+      return { activeCount: parseResult.orders.length, excludedCount: 0 };
+    }
+    const weekInfo = getWeekDateRange(activeWorkWeek.sundayStr, branding);
+    const { activeOrders, excludedOrders } = filterOrdersForScheduleOverlap(
+      parseResult.orders,
+      weekInfo,
+      branding
+    );
+    return {
+      activeCount: activeOrders.length,
+      excludedCount: excludedOrders.length,
+    };
+  }, [branding, parseResult.orders, activeWorkWeek]);
+
+  // 6. Group Work Orders by Technician (automatically read from Technicians column)
   const technicianRosters: TechnicianRoster[] = useMemo(() => {
     if (parseResult.orders.length === 0) return [];
 
@@ -170,7 +203,7 @@ export default function App() {
         technicianName: techName,
         technicianEmail: email,
         airtableUrl,
-        date: selectedDate === "all" ? (parseResult.detectedDates[0] || new Date().toISOString().split("T")[0]) : selectedDate,
+        date: selectedDate === "all" ? (activeWorkWeek ? activeWorkWeek.sundayStr : (parseResult.detectedDates[0] || new Date().toISOString().split("T")[0])) : selectedDate,
         orders,
         totalEstimatedMinutes,
         urgentCount,
@@ -180,7 +213,7 @@ export default function App() {
     });
 
     return rosters.sort((a, b) => b.urgentCount - a.urgentCount || a.technicianName.localeCompare(b.technicianName));
-  }, [parseResult.orders, selectedDate, parseResult.detectedDates, branding]);
+  }, [parseResult.orders, selectedDate, parseResult.detectedDates, branding, activeWorkWeek]);
 
   // 6. Saved Email History (Stored in localStorage per technician + work week)
   const [savedEmails, setSavedEmails] = useState<SavedEmailRecord[]>(() => getSavedEmails());
@@ -509,31 +542,67 @@ export default function App() {
                   </span>
                 </div>
 
-                {/* Schedule Overlap Toggle */}
-                <div className="flex items-center space-x-2 bg-emerald-50/70 border border-emerald-300/80 px-3 py-1.5 rounded-lg">
-                  <Filter className="w-3.5 h-3.5 text-emerald-700" />
-                  <span className="text-xs font-medium text-zinc-800">Schedule Overlap:</span>
-                  <button
-                    onClick={() =>
-                      handleSaveBranding({
-                        ...branding,
-                        enableScheduleOverlap: !branding.enableScheduleOverlap,
-                      })
-                    }
-                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-hidden cursor-pointer ${
-                      branding.enableScheduleOverlap ? "bg-emerald-600" : "bg-zinc-300"
-                    }`}
-                    title="Disregard and exclude schedules with dates outside the current workweek"
-                  >
-                    <span
-                      className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
-                        branding.enableScheduleOverlap ? "translate-x-4" : "translate-x-1"
+                {/* Schedule Overlap Toggle & Work Week Dropdown Picker */}
+                <div className="flex flex-wrap items-center gap-2.5 bg-emerald-50/80 border border-emerald-300/90 px-3 py-1.5 rounded-lg shadow-xs">
+                  <div className="flex items-center space-x-2">
+                    <Filter className="w-3.5 h-3.5 text-emerald-700" />
+                    <span className="text-xs font-semibold text-zinc-800">Schedule Overlap:</span>
+                    <button
+                      onClick={() =>
+                        handleSaveBranding({
+                          ...branding,
+                          enableScheduleOverlap: !branding.enableScheduleOverlap,
+                        })
+                      }
+                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-hidden cursor-pointer ${
+                        branding.enableScheduleOverlap ? "bg-emerald-600" : "bg-zinc-300"
                       }`}
-                    />
-                  </button>
-                  <span className="text-xs font-bold text-zinc-900">
-                    {branding.enableScheduleOverlap ? "Active (Filtered)" : "Off"}
-                  </span>
+                      title="Disregard and exclude schedules with dates outside the selected work week"
+                    >
+                      <span
+                        className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                          branding.enableScheduleOverlap ? "translate-x-4" : "translate-x-1"
+                        }`}
+                      />
+                    </button>
+                    <span className="text-xs font-bold text-zinc-900">
+                      {branding.enableScheduleOverlap ? "Active" : "Off"}
+                    </span>
+                  </div>
+
+                  {/* Work Week Dropdown Picker */}
+                  <div className="flex items-center space-x-1.5 pl-2 border-l border-emerald-300">
+                    <CalendarDays className="w-3.5 h-3.5 text-emerald-700" />
+                    <span className="text-xs font-semibold text-emerald-950">Work Week:</span>
+                    <select
+                      value={branding.selectedWorkWeek || "current"}
+                      onChange={(e) => {
+                        const nextWeek = e.target.value;
+                        handleSaveBranding({
+                          ...branding,
+                          selectedWorkWeek: nextWeek,
+                        });
+                      }}
+                      className="text-xs font-semibold bg-white border border-emerald-300 rounded-md px-2.5 py-1 text-emerald-950 shadow-xs focus:ring-1 focus:ring-emerald-500 focus:outline-none cursor-pointer"
+                      title="Select which work week to generate schedule for"
+                    >
+                      {workWeekOptions.map((opt) => (
+                        <option key={opt.id} value={opt.id}>
+                          {opt.fullLabel}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Excluded overlap counter badge */}
+                  {branding.enableScheduleOverlap && overlapStats.excludedCount > 0 && (
+                    <span
+                      className="text-[11px] font-bold text-emerald-800 bg-emerald-100/90 px-2 py-0.5 rounded-full border border-emerald-300"
+                      title={`${overlapStats.excludedCount} job(s) from outside the selected work week are excluded from dispatch emails`}
+                    >
+                      {overlapStats.excludedCount} excluded
+                    </span>
+                  )}
                 </div>
 
                 {/* Sun - Sun (8-Day View) Toggle */}
