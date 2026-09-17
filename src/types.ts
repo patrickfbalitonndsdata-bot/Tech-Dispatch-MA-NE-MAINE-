@@ -158,7 +158,8 @@ export interface TemplateBranding {
   emailUpdateVersion?: string | number; // e.g. "2"
   emailUpdateNotes?: string; // e.g. "I added two meetings to your schedule..."
   // Schedule Overlap detection & filtering toggle
-  enableScheduleOverlap?: boolean; // When enabled, detects and excludes schedules out of the current workweek range (e.g. WW37 overlapped jobs)
+  enableScheduleOverlap?: boolean; // When enabled, detects and excludes schedules out of the active workweek range
+  selectedWorkWeek?: "current" | "incoming" | string; // Selected work week ("current" | "incoming" or custom week identifier)
   // Sun - Sun 8-day view toggle
   enableSunSunView?: boolean; // When enabled, adds an additional Sunday section at the bottom and labels top and bottom Sunday with dates (e.g. Sunday 09/06 ... Sunday 09/13)
   // No Schedule Notes toggle
