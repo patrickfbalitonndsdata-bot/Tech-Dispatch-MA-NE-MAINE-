@@ -127,6 +127,7 @@ export const DEFAULT_BRANDING: TemplateBranding = {
   emailUpdateVersion: "2",
   emailUpdateNotes: "I added two meetings to your schedule: one at the Auburn Office at 11:00 AM on Friday, 09/04, and another at a central location in New York City on Sunday.",
   enableScheduleOverlap: false,
+  selectedWorkWeek: "current",
   enableSunSunView: false,
   disableScheduleNotes: false,
   enableConductStudy: false,
@@ -2388,6 +2389,176 @@ export function parseDateStringSafely(dateStr?: string): Date {
   return new Date();
 }
 
+export interface WorkWeekOption {
+  id: "current" | "incoming" | string;
+  type: "current" | "incoming" | "other";
+  label: string;
+  formattedRange: string;
+  fullLabel: string;
+  sundayDate: Date;
+  saturdayDate: Date;
+  nextSundayDate: Date;
+  sundayStr: string;
+  saturdayStr: string;
+  nextSundayStr: string;
+  orderCount?: number;
+}
+
+/**
+ * Computes standard Current and Incoming Work Week date boundaries (Sunday to Saturday or Sunday to Sunday).
+ */
+export function getStandardWorkWeekOptions(
+  branding?: TemplateBranding,
+  referenceDate?: Date
+): { current: WorkWeekOption; incoming: WorkWeekOption } {
+  const ref = referenceDate || new Date();
+  const day = ref.getDay(); // 0 is Sunday
+
+  // Current Sunday (00:00:00)
+  const currentSun = new Date(ref.getFullYear(), ref.getMonth(), ref.getDate() - day);
+  const currentSat = new Date(currentSun.getFullYear(), currentSun.getMonth(), currentSun.getDate() + 6);
+  const currentNextSun = new Date(currentSun.getFullYear(), currentSun.getMonth(), currentSun.getDate() + 7);
+
+  // Incoming Sunday (+7 days)
+  const incomingSun = new Date(currentSun.getFullYear(), currentSun.getMonth(), currentSun.getDate() + 7);
+  const incomingSat = new Date(incomingSun.getFullYear(), incomingSun.getMonth(), incomingSun.getDate() + 6);
+  const incomingNextSun = new Date(incomingSun.getFullYear(), incomingSun.getMonth(), incomingSun.getDate() + 7);
+
+  const isSunSun = Boolean(branding?.enableSunSunView);
+
+  const currentRange = isSunSun
+    ? `${formatToMMDDYYYY(currentSun)} - ${formatToMMDDYYYY(currentNextSun)}`
+    : `${formatToMMDDYYYY(currentSun)} - ${formatToMMDDYYYY(currentSat)}`;
+
+  const incomingRange = isSunSun
+    ? `${formatToMMDDYYYY(incomingSun)} - ${formatToMMDDYYYY(incomingNextSun)}`
+    : `${formatToMMDDYYYY(incomingSun)} - ${formatToMMDDYYYY(incomingSat)}`;
+
+  const currentSunStr = formatDateToYYYYMMDD(currentSun);
+  const currentSatStr = formatDateToYYYYMMDD(currentSat);
+  const currentNextSunStr = formatDateToYYYYMMDD(currentNextSun);
+
+  const incomingSunStr = formatDateToYYYYMMDD(incomingSun);
+  const incomingSatStr = formatDateToYYYYMMDD(incomingSat);
+  const incomingNextSunStr = formatDateToYYYYMMDD(incomingNextSun);
+
+  const current: WorkWeekOption = {
+    id: "current",
+    type: "current",
+    label: "Current Work week",
+    formattedRange: currentRange,
+    fullLabel: `Current Work week ${currentRange}`,
+    sundayDate: currentSun,
+    saturdayDate: currentSat,
+    nextSundayDate: currentNextSun,
+    sundayStr: currentSunStr,
+    saturdayStr: currentSatStr,
+    nextSundayStr: currentNextSunStr,
+  };
+
+  const incoming: WorkWeekOption = {
+    id: "incoming",
+    type: "incoming",
+    label: "Incoming Work week",
+    formattedRange: incomingRange,
+    fullLabel: `Incoming Work week ${incomingRange}`,
+    sundayDate: incomingSun,
+    saturdayDate: incomingSat,
+    nextSundayDate: incomingNextSun,
+    sundayStr: incomingSunStr,
+    saturdayStr: incomingSatStr,
+    nextSundayStr: incomingNextSunStr,
+  };
+
+  return { current, incoming };
+}
+
+/**
+ * Returns available Work Week options including Current, Incoming, and any other detected weeks from orders.
+ */
+export function getWorkWeekOptions(
+  orders: WorkOrder[] = [],
+  branding?: TemplateBranding,
+  referenceDate?: Date
+): WorkWeekOption[] {
+  const std = getStandardWorkWeekOptions(branding, referenceDate);
+  const isSunSun = Boolean(branding?.enableSunSunView);
+
+  let currentCount = 0;
+  let incomingCount = 0;
+  const otherWeeksMap = new Map<string, { sunday: Date; count: number }>();
+
+  orders.forEach((o) => {
+    const eff = resolveOrderEffectiveDate(o, branding?.useAnytimeTeardowns);
+    if (!eff) return;
+    const d = parseDateStringSafely(eff);
+    if (isNaN(d.getTime())) return;
+    const dStr = formatDateToYYYYMMDD(d);
+
+    const currentEndBound = isSunSun ? std.current.nextSundayStr : std.current.saturdayStr;
+    const incomingEndBound = isSunSun ? std.incoming.nextSundayStr : std.incoming.saturdayStr;
+
+    if (dStr >= std.current.sundayStr && dStr <= currentEndBound) {
+      currentCount++;
+    } else if (dStr >= std.incoming.sundayStr && dStr <= incomingEndBound) {
+      incomingCount++;
+    } else {
+      const oSun = new Date(d.getFullYear(), d.getMonth(), d.getDate() - d.getDay());
+      const oSunStr = formatDateToYYYYMMDD(oSun);
+      if (!otherWeeksMap.has(oSunStr)) {
+        otherWeeksMap.set(oSunStr, { sunday: oSun, count: 1 });
+      } else {
+        otherWeeksMap.get(oSunStr)!.count++;
+      }
+    }
+  });
+
+  const currentOption: WorkWeekOption = {
+    ...std.current,
+    orderCount: currentCount,
+    fullLabel: `Current Work week ${std.current.formattedRange}${currentCount > 0 ? ` (${currentCount} jobs)` : ""}`,
+  };
+
+  const incomingOption: WorkWeekOption = {
+    ...std.incoming,
+    orderCount: incomingCount,
+    fullLabel: `Incoming Work week ${std.incoming.formattedRange}${incomingCount > 0 ? ` (${incomingCount} jobs)` : ""}`,
+  };
+
+  const options: WorkWeekOption[] = [currentOption, incomingOption];
+
+  const sortedOtherSundays = Array.from(otherWeeksMap.keys()).sort();
+  sortedOtherSundays.forEach((oSunStr) => {
+    const item = otherWeeksMap.get(oSunStr)!;
+    const oSun = item.sunday;
+    const oSat = new Date(oSun.getFullYear(), oSun.getMonth(), oSun.getDate() + 6);
+    const oNextSun = new Date(oSun.getFullYear(), oSun.getMonth(), oSun.getDate() + 7);
+    const rangeStr = isSunSun
+      ? `${formatToMMDDYYYY(oSun)} - ${formatToMMDDYYYY(oNextSun)}`
+      : `${formatToMMDDYYYY(oSun)} - ${formatToMMDDYYYY(oSat)}`;
+
+    const isPrior = oSunStr < std.current.sundayStr;
+    const prefix = isPrior ? "Prior Work week" : "Work week";
+
+    options.push({
+      id: oSunStr,
+      type: "other",
+      label: `${prefix} ${rangeStr}`,
+      formattedRange: rangeStr,
+      fullLabel: `${prefix} ${rangeStr}${item.count > 0 ? ` (${item.count} jobs)` : ""}`,
+      sundayDate: oSun,
+      saturdayDate: oSat,
+      nextSundayDate: oNextSun,
+      sundayStr: oSunStr,
+      saturdayStr: formatDateToYYYYMMDD(oSat),
+      nextSundayStr: formatDateToYYYYMMDD(oNextSun),
+      orderCount: item.count,
+    });
+  });
+
+  return options;
+}
+
 export function getWeekDateRange(dateStr: string, branding?: TemplateBranding): {
   sundayStr: string;
   saturdayStr: string;
@@ -2402,7 +2573,22 @@ export function getWeekDateRange(dateStr: string, branding?: TemplateBranding): 
   sundayShort: string;
   nextSundayShort: string;
 } {
-  const baseDate = parseDateStringSafely(dateStr);
+  let baseDate: Date;
+
+  if (branding?.selectedWorkWeek === "incoming") {
+    const std = getStandardWorkWeekOptions(branding);
+    baseDate = std.incoming.sundayDate;
+  } else if (branding?.selectedWorkWeek === "current") {
+    const std = getStandardWorkWeekOptions(branding);
+    baseDate = std.current.sundayDate;
+  } else if (branding?.selectedWorkWeek && /^\d{4}-\d{2}-\d{2}$/.test(branding.selectedWorkWeek)) {
+    baseDate = parseDateStringSafely(branding.selectedWorkWeek);
+  } else if (branding?.weekStartDate) {
+    baseDate = parseDateStringSafely(branding.weekStartDate);
+  } else {
+    baseDate = parseDateStringSafely(dateStr);
+  }
+
   const dayOfWeek = baseDate.getDay(); // 0 is Sunday
 
   const sunday = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate() - dayOfWeek);
@@ -2421,7 +2607,11 @@ export function getWeekDateRange(dateStr: string, branding?: TemplateBranding): 
   const nextSundayStr = formatDateToYYYYMMDD(nextSunday);
 
   let formattedRange = "";
-  if (branding?.weekStartDate && branding?.weekEndDate) {
+  if (branding?.selectedWorkWeek === "incoming" || branding?.selectedWorkWeek === "current") {
+    formattedRange = branding?.enableSunSunView
+      ? `${sundayFormatted} - ${nextSundayFormatted}`
+      : `${sundayFormatted} - ${saturdayFormatted}`;
+  } else if (branding?.weekStartDate && branding?.weekEndDate) {
     formattedRange = `${branding.weekStartDate} - ${branding.weekEndDate}`;
   } else if (branding?.enableSunSunView) {
     formattedRange = `${sundayFormatted} - ${nextSundayFormatted}`;
@@ -2466,13 +2656,15 @@ export function isOrderInCurrentWorkWeek(
   let startBoundStr = weekInfo.sundayStr;
   let endBoundStr = branding?.enableSunSunView ? weekInfo.nextSundayStr : weekInfo.saturdayStr;
 
-  if (branding?.weekStartDate) {
-    const customStart = parseDateStringSafely(branding.weekStartDate);
-    startBoundStr = formatDateToYYYYMMDD(customStart);
-  }
-  if (branding?.weekEndDate) {
-    const customEnd = parseDateStringSafely(branding.weekEndDate);
-    endBoundStr = formatDateToYYYYMMDD(customEnd);
+  if (branding?.selectedWorkWeek === "custom" || (!branding?.selectedWorkWeek && (branding?.weekStartDate || branding?.weekEndDate))) {
+    if (branding?.weekStartDate) {
+      const customStart = parseDateStringSafely(branding.weekStartDate);
+      startBoundStr = formatDateToYYYYMMDD(customStart);
+    }
+    if (branding?.weekEndDate) {
+      const customEnd = parseDateStringSafely(branding.weekEndDate);
+      endBoundStr = formatDateToYYYYMMDD(customEnd);
+    }
   }
 
   // If orderDate is before the current work week Sunday or after the end date, it is out of range
