@@ -26,6 +26,7 @@ import {
   UploadCloud,
   ClipboardList,
   ExternalLink,
+  Filter,
 } from "lucide-react";
 import { TechnicianRoster, TemplateBranding, TemplateStyle, EmailAttachment } from "../types";
 import { resolveTechnicianAirtableUrl } from "../utils/technicianRosterData";
@@ -44,6 +45,8 @@ import {
   readFileAsBase64,
   getMimeTypeForFilename,
   formatTechnicianFullName,
+  getWeekDateRange,
+  filterOrdersForScheduleOverlap,
 } from "../utils/outlookTemplateGenerator";
 
 interface OutlookEmailPreviewProps {
@@ -282,6 +285,11 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
       setTimeout(() => setSavedFeedback(null), 3000);
     }
   };
+
+  const weekInfo = useMemo(() => getWeekDateRange(roster.date, branding), [roster.date, branding]);
+  const overlapInfo = useMemo(() => {
+    return filterOrdersForScheduleOverlap(roster.orders, weekInfo, branding);
+  }, [roster.orders, weekInfo, branding]);
 
   return (
     <div className="bg-white border border-zinc-200 rounded-xl shadow-xs overflow-hidden flex flex-col">
@@ -941,6 +949,18 @@ export const OutlookEmailPreview: React.FC<OutlookEmailPreviewProps> = ({
               </div>
             </div>
           </div>
+
+          {/* Schedule Overlap Filter Notice */}
+          {branding.enableScheduleOverlap && overlapInfo.excludedOrders.length > 0 && (
+            <div className="mx-4 mt-3 p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-between text-xs text-emerald-900 shadow-xs">
+              <div className="flex items-center space-x-2">
+                <Filter className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>
+                  <strong>Schedule Overlap Active:</strong> {overlapInfo.excludedOrders.length} job{overlapInfo.excludedOrders.length > 1 ? "s" : ""} outside <strong>{weekInfo.formattedRange}</strong> ({branding.selectedWorkWeek === "incoming" ? "Incoming Work week" : "Current Work week"}) {overlapInfo.excludedOrders.length > 1 ? "are" : "is"} excluded from this email.
+                </span>
+              </div>
+            </div>
+          )}
 
           {/* Email Body Preview (Rendered HTML) */}
           <div className="p-4 bg-[#F8FAFC] overflow-y-auto max-h-[600px]">
