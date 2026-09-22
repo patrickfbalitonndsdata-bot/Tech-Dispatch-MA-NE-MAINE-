@@ -603,6 +603,24 @@ export function formatBulletCameraCount(count?: string, backupUnits?: string, sc
  *    Format: `<Project Number> <City, State> <STUDY>`
  *    (e.g., "26-110022 Stamford TMC w/ Heavy Trucks", "26-554411 Norwalk Pedestrian", "26-410094 New Britain, CT DWY")
  */
+/**
+ * Extracts only the City from a "City, State" string by removing the state component.
+ * e.g. "Houston, TX" -> "Houston", "New Iberia, LA" -> "New Iberia", "Houston TX" -> "Houston"
+ */
+export function extractCityOnly(cityState: string): string {
+  if (!cityState) return "";
+  const trimmed = cityState.trim();
+  if (trimmed.includes(",")) {
+    return trimmed.split(",")[0].trim();
+  }
+  // Match standard two-letter state abbreviations at end of string without comma (e.g. "Houston TX")
+  const match = trimmed.match(/^(.*?)(?:\s+[A-Za-z]{2})$/);
+  if (match && match[1].trim()) {
+    return match[1].trim();
+  }
+  return trimmed;
+}
+
 export function formatNDSTaskHeaderLine(
   order: WorkOrder,
   projectNumber: string,
@@ -722,6 +740,7 @@ export function formatNDSTaskHeaderLine(
 
   // 3. TMC and the rest of the studies: `<Project Number> <City, State> <STUDY>`
   // Rule: Exclude <Add ons> for TMC and all other studies (only ALG and ATR keep add-ons)
+  // For TMC studies specifically: remove the State and only display the City (e.g. "Houston" instead of "Houston, TX")
   let studyStr = "";
   if (serviceType.toUpperCase().includes("TMC")) {
     studyStr = "TMC";
@@ -733,6 +752,9 @@ export function formatNDSTaskHeaderLine(
     studyStr = cleanService ? abbreviateStudyType(cleanService) : "TMC";
   }
 
+  const isTmcStudy = studyStr === "TMC" || studyStr.startsWith("TMC") || serviceType.toUpperCase().includes("TMC");
+  const displayCity = isTmcStudy ? extractCityOnly(cleanCity) : cleanCity;
+
   const partsHtml: string[] = [];
   const partsText: string[] = [];
 
@@ -740,9 +762,9 @@ export function formatNDSTaskHeaderLine(
     partsHtml.push(`<strong style="color: #000000;">${escapeHtml(cleanProj)}</strong>`);
     partsText.push(cleanProj);
   }
-  if (cleanCity) {
-    partsHtml.push(escapeHtml(cleanCity));
-    partsText.push(cleanCity);
+  if (displayCity) {
+    partsHtml.push(escapeHtml(displayCity));
+    partsText.push(displayCity);
   }
   if (studyStr) {
     partsHtml.push(escapeHtml(studyStr));
@@ -1578,14 +1600,11 @@ export function isMidnightThirtyTime(timeStr?: string): boolean {
 }
 
 /**
- * Resolves the timing label for a Teardown task header (e.g. "Anytime", "After 14:00", etc.)
+ * Resolves the timing label for a Teardown task header (e.g. "Anytime", "18:00", etc.)
  * Rule: Teardowns with 00:30 time are ALWAYS replaced with "Anytime".
+ * All other times are specific (e.g. "18:00", "14:00").
  */
-export function resolveTeardownTimingLabel(o: WorkOrder, useAnytime: boolean = true): string {
-  if (useAnytime) {
-    return "Anytime";
-  }
-
+export function resolveTeardownTimingLabel(o: WorkOrder, _useAnytime: boolean = false): string {
   const rawAfter = (o.teardownAfter || "").trim();
   const rawSlot = (o.timeSlot || "").trim();
   const rawNotes = (o.teardownTimeNotes || "").trim();
@@ -1646,11 +1665,11 @@ export function resolveTeardownTimingLabel(o: WorkOrder, useAnytime: boolean = t
       return "Anytime";
     }
 
-    const formattedTime = `${hour}:${minute.toString().padStart(2, "0")}`;
-    return `After ${formattedTime}`;
+    const formattedTime = `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`;
+    return formattedTime;
   }
 
-  return `After ${timeStr}`;
+  return timeStr;
 }
 
 /**
@@ -1834,11 +1853,7 @@ export function formatNDSTeardownNote(
  * - Earlier times (e.g. 14:00, 16:00, 18:30, 19:00, 19:30) get their chronological minute-of-day (0 to 1439).
  * - 0:30 / 00:30 / 12:30 AM (Midnight) gets 9999999 so it is ALWAYS sorted on the LAST row of that day's teardowns.
  */
-export function getTeardownSortMinute(order: WorkOrder, useAnytime: boolean = true): number {
-  if (useAnytime) {
-    return -10000; // When Anytime is active, Anytime is listed on the first rows!
-  }
-
+export function getTeardownSortMinute(order: WorkOrder, _useAnytime: boolean = false): number {
   const rawAfter = (order.teardownAfter || "").trim();
   const timeSlot = (order.timeSlot || "").trim();
   const rawNotes = (order.teardownTimeNotes || "").trim();
@@ -2190,7 +2205,7 @@ export function renderNDSTaskGroupHtml(
     const timingLabel = teardownTiming ? `Teardown ${teardownTiming}:` : "Teardown:";
     mainLine = `
     <div style="margin: 6px 0 3px 0; font-family: Calibri, 'Segoe UI', Arial, sans-serif; font-size: 11pt; line-height: 1.5; color: #000000; font-weight: bold;">
-      <span style="background-color: #FFFF00; color: #000000; font-weight: bold; padding: 0 4px; display: inline-block;">${timingLabel}</span> <span style="color: #FF0000; font-weight: bold;">Upload Data</span> <span style="color: #000000; font-weight: bold;">${formattedHtml}${unitPartFormatted}</span> ${checkNoteHtml}
+      <span style="background-color: #FFFF00; color: #000000; font-weight: bold; padding: 0 4px; display: inline-block;">${timingLabel}</span> <span style="color: #FF0000; font-weight: bold;">Upload Data</span> <span style="color: #000000; font-weight: bold;">${formattedHtml}${unitPartFormatted}</span>
     </div>`;
   } else {
     // Default: Install
@@ -2284,7 +2299,7 @@ export function renderNDSTaskGroupText(
   } else if (category === "Teardown") {
     const teardownTiming = resolveTeardownTimingLabel(o, useAnytime);
     const timingLabel = teardownTiming ? `Teardown ${teardownTiming}:` : "Teardown:";
-    mainLine = `${timingLabel} Upload Data ${formattedText}${unitPartFormatted} ${checkNoteText}`;
+    mainLine = `${timingLabel} Upload Data ${formattedText}${unitPartFormatted}`;
   } else {
     mainLine = `Install: ${formattedText}${unitPartFormatted}`;
   }
